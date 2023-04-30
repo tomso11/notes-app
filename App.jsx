@@ -3,51 +3,69 @@ import Sidebar from "./components/Sidebar"
 import Editor from "./components/Editor"
 import Split from "react-split"
 import { nanoid } from "nanoid"
+import { onSnapshot, addDoc, doc, deleteDoc, setDoc  } from "firebase/firestore"
+import { notesCollection, db } from "./firebase"
 
 export default function App() {
-    const [notes, setNotes] = React.useState(
-        () => JSON.parse(localStorage.getItem("notes")) || []
-    )
-    const [currentNoteId, setCurrentNoteId] = React.useState(
-        (notes[0]?.id) || ""
-    )
+    const [notes, setNotes] = React.useState([])
+    const [currentNoteId, setCurrentNoteId] = React.useState("")
+    // TODO: This has to be initialized with the value existing in Firebase for the current note
+    const [tempNoteText, setTempNoteText] = React.useState("")
     
     const currentNote = 
         notes.find(note => note.id === currentNoteId) 
         || notes[0]
 
     React.useEffect(() => {
-        localStorage.setItem("notes", JSON.stringify(notes))
+        const unsubscribe = onSnapshot(notesCollection, (snapshot) => {
+            const notesArr = snapshot.docs.map(doc => ({
+                ...doc.data(),
+                id: doc.id
+            }))
+            setNotes(notesArr)
+        })
+        // return the function to unsubscribe from the event so it gets removed on unmount
+        return unsubscribe
+    }, [])
+
+    React.useEffect(() => {
+        if (!currentNoteId) {
+            setCurrentNoteId(notes[0]?.id)
+        }
     }, [notes])
 
-    function createNewNote() {
+    React.useEffect(() => {
+        if(currentNote)
+            setTempNoteText(currentNote.body)
+    }, [currentNote])
+    
+    React.useEffect(() => {
+        const timeoutId = setTimeout(() => {
+            if(tempNoteText !== currentNote.body)
+                {updateNote(tempNoteText)}
+        }, 500)
+        return () => clearTimeout(timeoutId)
+    }, [tempNoteText])
+
+    async function createNewNote() {
         const newNote = {
             id: nanoid(),
-            body: "# Type your markdown note's title here"
+            body: "# Type your markdown note's title here",
+            createdAt: Date.now(),
+            updatedAt: Date.now()
         }
-        setNotes(prevNotes => [newNote, ...prevNotes])
-        setCurrentNoteId(newNote.id)
+        const newNoteRef = await addDoc(notesCollection, newNote)
+        setCurrentNoteId(newNoteRef.id)
     }
 
-    function updateNote(text) {
-        setNotes(oldNotes => {
-            const newArray = []
-            for (let i = 0; i < oldNotes.length; i++) {
-                const oldNote = oldNotes[i]
-                if (oldNote.id === currentNoteId) {
-                    // Put the most recently-modified note at the top
-                    newArray.unshift({ ...oldNote, body: text })
-                } else {
-                    newArray.push(oldNote)
-                }
-            }
-            return newArray
-        })
+    async function updateNote(text) {
+        const docRef = doc(db, "notes", currentNoteId)
+        await setDoc(docRef, { body: text, updatedAt: Date.now() }, { merge: true })
     }
 
-    function deleteNote(event, noteId) {
-        event.stopPropagation()
-        setNotes(oldNotes => oldNotes.filter(note => note.id !== noteId))
+    function deleteNote(noteId) {
+        const docRef = doc(db, "notes", noteId)
+        deleteDoc(docRef)
     }
 
     return (
@@ -67,14 +85,11 @@ export default function App() {
                             newNote={createNewNote}
                             deleteNote={deleteNote}
                         />
-                        {
-                            currentNoteId &&
-                            notes.length > 0 &&
-                            <Editor
-                                currentNote={currentNote}
-                                updateNote={updateNote}
-                            />
-                        }
+                        <Editor
+                                tempNoteText={tempNoteText}
+                                setTempNoteText={setTempNoteText}
+                        />
+                        
                     </Split>
                     :
                     <div className="no-notes">
